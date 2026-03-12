@@ -1,0 +1,359 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useAlert } from '@/lib/alert-context';
+
+interface Scene {
+  id: string;
+  scriptId: string;
+  name: string;
+  description: string | null;
+  backgroundUrl: string | null;
+  referenceImageUrl: string | null;
+  createdAt: string;
+}
+
+export default function EditScenePage() {
+  const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnUrl = searchParams.get('returnUrl');
+
+  const [scene, setScene] = useState<Scene | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [generatingImage, setGeneratingImage] = useState(false);
+  const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+  });
+  const [selectedBackground, setSelectedBackground] = useState<string | null>(null);
+  const [selectedReferenceImage, setSelectedReferenceImage] = useState<string | null>(null);
+  const [imageStyle, setImageStyle] = useState('cinematic');
+  const [activeTab, setActiveTab] = useState<'background' | 'reference'>('background');
+  const { showError, showWarning } = useAlert();
+
+  useEffect(() => {
+    fetchScene();
+  }, [params.sceneId]);
+
+  const fetchScene = async () => {
+    try {
+      const response = await fetch(`/api/scenes/${params.sceneId}`);
+      const result = await response.json();
+
+      if (result.success) {
+        setScene(result.data);
+        setFormData({
+          name: result.data.name,
+          description: result.data.description || '',
+        });
+        setSelectedBackground(result.data.backgroundUrl);
+        setSelectedReferenceImage(result.data.referenceImageUrl);
+      } else {
+        showError('场景不存在', '错误');
+        router.push(returnUrl || `/scripts/${params.id}?tab=scenes`);
+      }
+    } catch (error) {
+      console.error('Error fetching scene:', error);
+      showError('加载失败，请重试', '错误');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!formData.name) {
+      showWarning('请输入场景名称', '提示');
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const response = await fetch(`/api/scenes/${params.sceneId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name,
+          description: formData.description,
+          backgroundUrl: selectedBackground,
+          referenceImageUrl: selectedReferenceImage,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        router.push(returnUrl || `/scripts/${params.id}?tab=scenes`);
+      } else {
+        showError('保存失败：' + (result.error || '未知错误'), '错误');
+      }
+    } catch (error) {
+      console.error('Error updating scene:', error);
+      showError('保存失败，请重试', '错误');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGenerateImage = async () => {
+    if (!formData.description) {
+      showWarning('请先输入场景描述', '提示');
+      return;
+    }
+
+    setGeneratingImage(true);
+    setGeneratedImages([]);
+
+    try {
+      const response = await fetch('/api/scenes/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description: formData.description,
+          count: 4,
+          style: imageStyle,
+        }),
+      });
+
+      const result = await response.json();
+
+      // 兼容两种返回格式: result.data 或 result.images
+      const imageList = result.data || result.images;
+      
+      if (result.success && imageList && imageList.length > 0) {
+        const imageUrls = imageList.map((img: any) => img.url);
+        setGeneratedImages(imageUrls);
+      } else {
+        showError('图片生成失败: ' + (result.error || '未知错误'), '错误');
+      }
+    } catch (error) {
+      console.error('Error generating image:', error);
+      showError('图片生成失败，请重试', '错误');
+    } finally {
+      setGeneratingImage(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="container mx-auto py-6">
+        <div className="text-center">加载中...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto py-6 max-w-4xl">
+      <div className="mb-6">
+        <Link href={returnUrl || `/scripts/${params.id}?tab=scenes`}>
+          <Button variant="ghost">← 返回</Button>
+        </Link>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>编辑场景</CardTitle>
+          <CardDescription>更新场景信息和背景图</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* 当前背景图 */}
+            {scene?.backgroundUrl && (
+              <div className="space-y-2">
+                <Label>当前背景图</Label>
+                <div className="aspect-video rounded-lg overflow-hidden border border-gray-200">
+                  <img
+                    src={scene.backgroundUrl}
+                    alt="当前背景"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* 当前参考图 */}
+            {scene?.referenceImageUrl && (
+              <div className="space-y-2">
+                <Label>当前参考图</Label>
+                <div className="aspect-video rounded-lg overflow-hidden border border-gray-200">
+                  <img
+                    src={scene.referenceImageUrl}
+                    alt="当前参考图"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* 场景名称 */}
+            <div className="space-y-2">
+              <Label htmlFor="name">场景名称 *</Label>
+              <Input
+                id="name"
+                placeholder="例如：森林小屋、城市街道"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                disabled={saving}
+              />
+            </div>
+
+            {/* 场景描述 */}
+            <div className="space-y-2">
+              <Label htmlFor="description">场景描述 *</Label>
+              <Textarea
+                id="description"
+                placeholder="详细描述场景的环境、氛围、时间等"
+                rows={4}
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                disabled={saving}
+              />
+            </div>
+
+            {/* 图片风格 */}
+            <div className="space-y-2">
+              <Label htmlFor="style">图片风格</Label>
+              <Select value={imageStyle} onValueChange={setImageStyle} disabled={saving || generatingImage}>
+                <SelectTrigger id="style">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cinematic">电影感</SelectItem>
+                  <SelectItem value="anime">动漫风格</SelectItem>
+                  <SelectItem value="realistic">写实风格</SelectItem>
+                  <SelectItem value="fantasy">奇幻风格</SelectItem>
+                  <SelectItem value="watercolor">水彩风格</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* 图片生成区域 */}
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'background' | 'reference')}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="background">背景图</TabsTrigger>
+                <TabsTrigger value="reference">参考图</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="background" className="space-y-2">
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    onClick={handleGenerateImage}
+                    disabled={!formData.description || generatingImage || saving}
+                    className="w-full"
+                  >
+                    {generatingImage ? '生成中...' : '生成新的场景背景图'}
+                  </Button>
+                </div>
+
+                {/* 生成的背景图选择 */}
+                {generatedImages.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>选择新背景图</Label>
+                    <div className="grid grid-cols-2 gap-4">
+                      {generatedImages.map((imageUrl, index) => (
+                        <div
+                          key={index}
+                          className={`relative aspect-video rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
+                            selectedBackground === imageUrl
+                              ? 'border-primary ring-2 ring-primary'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                          onClick={() => setSelectedBackground(imageUrl)}
+                        >
+                          <img
+                            src={imageUrl}
+                            alt={`背景图 ${index + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          {selectedBackground === imageUrl && (
+                            <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs">
+                              ✓
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="reference" className="space-y-2">
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    onClick={handleGenerateImage}
+                    disabled={!formData.description || generatingImage || saving}
+                    className="w-full"
+                  >
+                    {generatingImage ? '生成中...' : '生成新的场景参考图'}
+                  </Button>
+                  <p className="text-xs text-gray-500">
+                    参考图将用于后续分镜生成时保持场景风格一致
+                  </p>
+                </div>
+
+                {/* 生成的参考图选择 */}
+                {generatedImages.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>选择新参考图</Label>
+                    <div className="grid grid-cols-2 gap-4">
+                      {generatedImages.map((imageUrl, index) => (
+                        <div
+                          key={index}
+                          className={`relative aspect-video rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
+                            selectedReferenceImage === imageUrl
+                              ? 'border-primary ring-2 ring-primary'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                          onClick={() => setSelectedReferenceImage(imageUrl)}
+                        >
+                          <img
+                            src={imageUrl}
+                            alt={`参考图 ${index + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          {selectedReferenceImage === imageUrl && (
+                            <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs">
+                              ✓
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+
+            {/* 提交按钮 */}
+            <div className="flex gap-2 pt-4">
+              <Button type="submit" disabled={saving || (!formData.name && !formData.description)}>
+                {saving ? '保存中...' : '保存更改'}
+              </Button>
+              <Link href={returnUrl || `/scripts/${params.id}?tab=scenes`}>
+                <Button type="button" variant="outline" disabled={saving}>
+                  取消
+                </Button>
+              </Link>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

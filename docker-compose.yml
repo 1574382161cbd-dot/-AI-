@@ -1,0 +1,84 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: comic-creator-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/comic_creator
+      - BACKUP_DIR=/app/backups
+      - BACKUP_RETENTION_DAYS=7
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - comic-network
+    volumes:
+      - backups:/app/backups
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db:
+    image: postgres:16-alpine
+    container_name: comic-creator-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=comic_creator
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - comic-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d comic_creator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backup:
+    image: postgres:16-alpine
+    container_name: comic-creator-backup
+    restart: unless-stopped
+    environment:
+      - PGPASSWORD=postgres
+      - BACKUP_RETENTION_DAYS=7
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - comic-network
+    volumes:
+      - backups:/backups
+    entrypoint: |
+      sh -c '
+        while true; do
+          TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
+          BACKUP_FILE="/backups/backup_$$TIMESTAMP.sql"
+          echo "Starting backup at $$TIMESTAMP"
+          pg_dump -h db -U postgres -d comic_creator -F p -f "$$BACKUP_FILE"
+          echo "Backup completed: $$BACKUP_FILE"
+          
+          find /backups -name "backup_*.sql" -type f -mtime +$$BACKUP_RETENTION_DAYS -delete
+          
+          sleep 86400
+        done
+      '
+
+networks:
+  comic-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  backups:
